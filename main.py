@@ -1,4 +1,4 @@
-import os, re, base64, hmac, hashlib
+import os, re, time, base64, hmac, hashlib
 from urllib.parse import urlparse, unquote
 from contextlib import asynccontextmanager
 
@@ -46,6 +46,12 @@ async def on_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not m:
         return
     url = m.group(0)
+    if sf_code(url):
+        try:
+            await resolve(url)
+        except ResolveError as e:
+            await update.message.reply_text(f"Savefiles link resolve nahi hua: {e}")
+            return
     player = f"{BASE_URL}/player?t={make_token(url)}"
     kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton("👉 Play Online Free", web_app=WebAppInfo(url=player))]]
@@ -66,6 +72,81 @@ http = httpx.AsyncClient(
     limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
     headers={"User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"},
 )
+
+
+# ---------- Savefiles.com resolver (apni account ki API se direct link) ----------
+SAVEFILES_KEY = os.environ.get("SAVEFILES_KEY", "")
+SAVEFILES_HOST = os.environ.get("SAVEFILES_HOST", "https://savefiles.com").rstrip("/")
+_cache = {}  # file_code -> (direct_url, expiry)
+
+
+class ResolveError(Exception):
+    pass
+
+
+def sf_code(url: str):
+    p = urlparse(url)
+    if not (p.hostname or "").lower().endswith("savefiles.com"):
+        return None
+    parts = [x for x in p.path.split("/") if x]
+    if not parts:
+        return None
+    if parts[0] in ("d", "e", "v", "embed", "file") and len(parts) > 1:
+        return parts[1]
+    return parts[0]
+
+
+def _find_url(o):
+    if isinstance(o, str):
+        return o if o.startswith("http") else None
+    if isinstance(o, dict):
+        for k in ("url", "direct_link", "download_url", "link"):
+            if k in o:
+                r = _find_url(o[k])
+                if r:
+                    return r
+        for val in o.values():
+            r = _find_url(val)
+            if r:
+                return r
+    if isinstance(o, list):
+        for val in o:
+            r = _find_url(val)
+            if r:
+                return r
+    return None
+
+
+async def resolve(url: str) -> str:
+    code = sf_code(url)
+    if not code:
+        return url  # normal direct link
+    if not SAVEFILES_KEY:
+        raise ResolveError("SAVEFILES_KEY set nahi hai")
+    hit = _cache.get(code)
+    if hit and hit[1] > time.time():
+        return hit[0]
+    last = "link nahi mila"
+    for ep in ("file/direct_link", "file/direct"):
+        try:
+            r = await http.get(
+                f"{SAVEFILES_HOST}/api/{ep}",
+                params={"key": SAVEFILES_KEY, "file_code": code},
+                timeout=20,
+            )
+            data = r.json()
+        except Exception as e:
+            last = type(e).__name__
+            continue
+        if data.get("status") == 200 and data.get("result") is not None:
+            direct = _find_url(data["result"])
+            if direct:
+                if ".m3u8" in direct.split("?")[0]:
+                    raise ResolveError("Ye HLS (.m3u8) link hai, abhi support nahi")
+                _cache[code] = (direct, time.time() + 1800)
+                return direct
+        last = str(data.get("msg") or data.get("status") or "link nahi mila")
+    raise ResolveError(last)
 
 
 @asynccontextmanager
@@ -96,7 +177,10 @@ async def player():
 # ---------- Range-aware proxy: seeking + fast start ----------
 @app.get("/stream/{token}")
 async def stream(token: str, request: Request):
-    url = read_token(token)
+    try:
+        url = await resolve(read_token(token))
+    except ResolveError:
+        raise HTTPException(502, "source resolve failed")
     headers = {}
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
