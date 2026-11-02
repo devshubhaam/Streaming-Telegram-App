@@ -28,7 +28,7 @@
   <div class="gate" id="gate">
     <div>🎬 Video ready hai</div>
     <button class="btn" id="playBtn">▶️ Play Now</button>
-    <small>Ek chhota sponsor ad dikhega, phir video chalega</small>
+    <small id="note">Ek chhota sponsor ad dikhega, phir video chalega</small>
   </div>
   <div class="spin" id="spin"></div>
   <div class="err" id="err">Video load nahi hua.<br><button id="retry">Retry</button></div>
@@ -59,10 +59,23 @@
     v.play().catch(() => { spin.style.display = "none"; });
   }
 
+  const note = document.getElementById("note");
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
   document.getElementById("playBtn").onclick = async () => {
     const show = window["show_" + ZONE];
-    if (typeof show === "function") {
-      try { await show(); } catch (e) { /* ad nahi mila ya band hua: video phir bhi chalao */ }
+    if (typeof show !== "function") {
+      note.textContent = "DEBUG: Monetag SDK load nahi hua (show_" + ZONE + " missing)";
+      await sleep(3000);
+    } else {
+      try {
+        await show();
+      } catch (e) {
+        let msg = "";
+        try { msg = (e && (e.message || e.error || JSON.stringify(e))) || String(e); } catch (_) { msg = String(e); }
+        note.textContent = "DEBUG: ad error: " + msg;
+        await sleep(3000);
+      }
     }
     startVideo();
   };
