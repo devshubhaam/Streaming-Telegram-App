@@ -1,4 +1,5 @@
 import os, re, base64, hmac, hashlib
+from urllib.parse import urlparse, unquote
 from contextlib import asynccontextmanager
 
 import httpx
@@ -110,6 +111,10 @@ async def stream(token: str, request: Request):
         if h in upstream.headers:
             out[h] = upstream.headers[h]
     out["Content-Type"] = upstream.headers.get("content-type", "video/mp4")
+    if request.query_params.get("dl"):
+        name = os.path.basename(unquote(urlparse(url).path)) or "video.mp4"
+        name = name.replace('"', "")
+        out["Content-Disposition"] = f'attachment; filename="{name}"'
 
     async def body():
         try:
