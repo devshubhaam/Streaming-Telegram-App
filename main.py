@@ -96,6 +96,29 @@ def sf_code(url: str):
     return parts[0]
 
 
+# ---------- Embed-only hosts (streamhls.to etc): host ka official embed player ----------
+EMBED_HOSTS = {"streamhls.to"} | {
+    h.strip().lower() for h in os.environ.get("EMBED_HOSTS", "").split(",") if h.strip()
+}
+
+
+def embed_url(url: str):
+    p = urlparse(url)
+    host = (p.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host not in EMBED_HOSTS:
+        return None
+    parts = [x for x in p.path.split("/") if x]
+    if not parts:
+        return None
+    if parts[0] in ("e", "d", "v", "embed", "file") and len(parts) > 1:
+        code = parts[1]
+    else:
+        code = parts[0]
+    return f"https://{host}/e/{code}"
+
+
 def _find_url(o):
     if isinstance(o, str):
         return o if o.startswith("http") else None
@@ -172,6 +195,12 @@ async def root():
 @app.get("/player")
 async def player():
     return FileResponse(os.path.join(BASE_DIR, "player.html"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/meta/{token}")
+async def meta(token: str):
+    e = embed_url(read_token(token))
+    return {"mode": "embed", "src": e} if e else {"mode": "video"}
 
 
 # ---------- Range-aware proxy: seeking + fast start ----------
