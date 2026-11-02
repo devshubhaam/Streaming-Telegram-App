@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Play Video</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<!-- MONETAG TAG: dashboard wala "copy this tag" yahan paste karo (neeche wale se replace) -->
-<script src="//libtl.com/sdk.js" data-zone="12172196" data-sdk="show_12172196" onload="window.__sdk='loaded'" onerror="window.__sdk='blocked'"></script>
+<!-- TADS widget script -->
+<script src="https://w.tads.me/widget.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#000;color:#fff;font-family:system-ui,sans-serif}
   .wrap{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center}
@@ -28,16 +28,17 @@
   <div class="gate" id="gate">
     <div>🎬 Video ready hai</div>
     <button class="btn" id="playBtn">▶️ Play Now</button>
-    <small id="note">Ek chhota sponsor ad dikhega, phir video chalega</small>
+    <small>Ek chhota sponsor ad dikhega, phir video chalega</small>
   </div>
   <div class="spin" id="spin"></div>
   <div class="err" id="err">Video load nahi hua.<br><button id="retry">Retry</button></div>
 </div>
 
 <script>
-  // ====== MONETAG: apna Zone ID yahan daalo (Monetag dashboard > Telegram Mini App zone) ======
-  const ZONE = "12172196";
-  // ===========================================================================================
+  // ====== TADS: dashboard se Fullscreen widget banao aur uska ID yahan daalo ======
+  const WIDGET_ID = "13042";
+  const IS_DEBUG  = true;               // test ke time true, live jaane par false
+  // ================================================================================
 
   const tg = window.Telegram && Telegram.WebApp;
   if (tg) { tg.ready(); tg.expand(); }
@@ -48,8 +49,9 @@
   const err = document.getElementById("err");
   const gate = document.getElementById("gate");
   const src = "/stream/" + t;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  // Video ko background me pehle se warm-up (metadata) taaki ad ke baad turant chale
+  // Video ko pehle se warm-up (metadata) taaki ad ke baad turant chale
   if (t) { v.src = src; v.load(); }
 
   function startVideo() {
@@ -59,27 +61,37 @@
     v.play().catch(() => { spin.style.display = "none"; });
   }
 
-  const note = document.getElementById("note");
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  let controller = null;
+
+  async function getController() {
+    for (let i = 0; i < 40 && !(window.tads && typeof window.tads.init === "function"); i++) await sleep(100);
+    if (!(window.tads && typeof window.tads.init === "function")) return null;
+    if (!controller) {
+      controller = window.tads.controllers?.[WIDGET_ID] || window.tads.init({
+        widgetId: Number(WIDGET_ID),
+        type: "fullscreen",
+        debug: IS_DEBUG,
+        onShowReward: () => finish(),     // ad poora dekha -> video
+        onAdsNotFound: () => finish()     // ad nahi mila -> video phir bhi chalao
+      });
+    }
+    return controller;
+  }
+
+  let finished = false;
+  function finish() { if (finished) return; finished = true; startVideo(); }
 
   document.getElementById("playBtn").onclick = async () => {
-    note.textContent = "Ad load ho raha hai...";
-    for (let i = 0; i < 20 && typeof window["show_" + ZONE] !== "function" && window.__sdk !== "blocked"; i++) await sleep(200);
-    const show = window["show_" + ZONE];
-    if (typeof show !== "function") {
-      note.textContent = "DEBUG: SDK status = " + (window.__sdk || "pending") + " (blocked = libtl.com load nahi hua, loaded = function nahi bana)";
-      await sleep(5000);
-    } else {
-      try {
-        await show();
-      } catch (e) {
-        let msg = "";
-        try { msg = (e && (e.message || e.error || JSON.stringify(e))) || String(e); } catch (_) { msg = String(e); }
-        note.textContent = "DEBUG: ad error: " + msg;
-        await sleep(3000);
-      }
+    finished = false;
+    if (!WIDGET_ID) { finish(); return; }   // widget ID set nahi hua
+    try {
+      const c = await getController();
+      if (!c) { finish(); return; }
+      await c.showAd();                  // fullscreen ad kholta hai
+    } catch (e) {
+      console.log("TADS:", e);
+      finish();                          // error / too many ads -> video chalao
     }
-    startVideo();
   };
 
   v.addEventListener("waiting", () => spin.style.display = "block");
