@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+httpx
+python-telegram-bot>=20.7

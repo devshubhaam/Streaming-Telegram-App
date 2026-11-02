@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Play Video</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#fff;font-family:system-ui,sans-serif}
+  .wrap{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center}
+  video{width:100%;max-height:100%;background:#000;outline:none}
+  .spin{position:absolute;width:46px;height:46px;border:4px solid #ffffff33;border-top-color:#fff;
+        border-radius:50%;animation:s 0.8s linear infinite;pointer-events:none;display:none}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .err{position:absolute;display:none;text-align:center;padding:20px}
+  .err button{margin-top:12px;padding:10px 22px;border:0;border-radius:8px;font-size:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <video id="v" controls playsinline webkit-playsinline preload="metadata"></video>
+  <div class="spin" id="spin"></div>
+  <div class="err" id="err">Video load nahi hua.<br><button id="retry">Retry</button></div>
+</div>
+<script>
+  const tg = window.Telegram && Telegram.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  const t = new URLSearchParams(location.search).get("t");
+  const v = document.getElementById("v");
+  const spin = document.getElementById("spin");
+  const err = document.getElementById("err");
+  const src = "/stream/" + t;
+
+  function load() {
+    err.style.display = "none";
+    spin.style.display = "block";
+    v.src = src;
+    v.load();
+    v.play().catch(() => {});          // autoplay blocked ho to user play dabayega
+  }
+
+  v.addEventListener("waiting", () => spin.style.display = "block");
+  v.addEventListener("loadstart", () => spin.style.display = "block");
+  v.addEventListener("canplay", () => spin.style.display = "none");
+  v.addEventListener("playing", () => spin.style.display = "none");
+  v.addEventListener("error", () => { spin.style.display = "none"; err.style.display = "block"; });
+  document.getElementById("retry").onclick = load;
+
+  if (t) load(); else err.style.display = "block";
+</script>
+</body>
+</html>
