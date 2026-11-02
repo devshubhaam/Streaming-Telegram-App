@@ -93,6 +93,7 @@
   // ====== Settings ======
   const WIDGET_ID = "13042";   // TADS Fullscreen widget
   const IS_DEBUG  = true;      // test me true, live jaane par false
+  const ADS_ENABLED = false;   // false = ads band, video seedha chalega
   // ======================
 
   const tg = window.Telegram && Telegram.WebApp;
@@ -202,6 +203,8 @@
     } catch (e) {}
     if (mode === "video") { v.src = "/stream/" + t; v.load(); }   // peeche warm-up, ad ke baad turant chale
     setTimeout(() => { if (!unlocked && modal.hidden) retryLink.hidden = false; }, 8000);
+
+    if (!ADS_ENABLED) { unlock(); return; }
 
     for (let i = 0; i < 60 && !(window.tads && typeof window.tads.init === "function"); i++) await sleep(100);
     if (!(window.tads && typeof window.tads.init === "function")) { fail("blocked"); return; }
