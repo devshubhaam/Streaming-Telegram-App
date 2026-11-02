@@ -20,6 +20,7 @@
 
   .player{position:relative;flex:1;min-height:0;background:#000}
   video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
+  iframe{width:100%;height:100%;border:0;background:#000;display:block}
 
   .lock{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;
     align-items:center;justify-content:center;gap:14px;padding:28px;text-align:center}
@@ -58,6 +59,7 @@
 <div class="app">
   <div class="player">
     <video id="v" playsinline webkit-playsinline preload="metadata"></video>
+    <iframe id="frame" hidden allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowfullscreen></iframe>
     <div class="lock" id="lock">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
       <div class="ring" id="ring"></div>
@@ -101,7 +103,8 @@
   const $ = id => document.getElementById(id);
   const t = new URLSearchParams(location.search).get("t");
   const v = $("v"), lock = $("lock"), lockMsg = $("lockMsg"), ring = $("ring");
-  const dl = $("dl"), dur = $("dur"), modal = $("modal"), retryLink = $("retryLink");
+  const dl = $("dl"), dur = $("dur"), modal = $("modal"), retryLink = $("retryLink"), frame = $("frame");
+  let mode = "video", embedSrc = "";
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   let unlocked = false;
 
@@ -147,6 +150,12 @@
     unlocked = true;
     modal.hidden = true;
     lock.hidden = true;
+    if (mode === "embed") {
+      frame.src = embedSrc;          // ad ke baad hi load hota hai
+      frame.hidden = false;
+      dur.textContent = "Ready";
+      return;
+    }
     v.controls = true;
     dl.disabled = false;
     dur.textContent = v.duration ? fmt(v.duration) : "Ready";
@@ -161,11 +170,19 @@
   }
 
   v.addEventListener("loadedmetadata", () => { if (unlocked) dur.textContent = fmt(v.duration); });
-  v.addEventListener("error", () => {
+  v.addEventListener("error", async () => {
     if (!unlocked) return;
     lock.hidden = false;
     ring.hidden = true;
-    lockMsg.textContent = "Video load nahi hua.";
+    let why = "";
+    try {
+      const r = await fetch("/stream/" + t, { headers: { Range: "bytes=0-0" } });
+      const ct = (r.headers.get("content-type") || "").toLowerCase();
+      if (!r.ok) why = " (server error " + r.status + ": source link resolve nahi hua)";
+      else if (ct.includes("mpegurl") || ct.includes("text") || ct.includes("html")) why = " (ye direct video nahi, HLS ya page link hai)";
+      else why = " (video format is phone me support nahi)";
+    } catch (e) { why = " (network error)"; }
+    lockMsg.textContent = "Video load nahi hua" + why + ".";
     retryLink.textContent = "Retry";
     retryLink.hidden = false;
   });
@@ -179,8 +196,11 @@
   async function run() {
     if (!t) { ring.hidden = true; lockMsg.textContent = "Link sahi nahi hai."; return; }
 
-    v.src = "/stream/" + t;   // peeche warm-up, ad ke baad turant chale
-    v.load();
+    try {
+      const m = await (await fetch("/meta/" + t)).json();
+      if (m.mode === "embed") { mode = "embed"; embedSrc = m.src; dl.hidden = true; v.hidden = true; }
+    } catch (e) {}
+    if (mode === "video") { v.src = "/stream/" + t; v.load(); }   // peeche warm-up, ad ke baad turant chale
     setTimeout(() => { if (!unlocked && modal.hidden) retryLink.hidden = false; }, 8000);
 
     for (let i = 0; i < 60 && !(window.tads && typeof window.tads.init === "function"); i++) await sleep(100);
