@@ -1,86 +1,121 @@
-<!DOCTYPE html>
-<html lang="hi">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Play Video</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<style>
-  html,body{margin:0;height:100%;background:#000;color:#fff;font-family:system-ui,sans-serif}
-  .wrap{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center}
-  video{width:100%;max-height:100%;background:#000;outline:none}
-  .spin{position:absolute;width:46px;height:46px;border:4px solid #ffffff33;border-top-color:#fff;
-        border-radius:50%;animation:s .8s linear infinite;pointer-events:none;display:none}
-  @keyframes s{to{transform:rotate(360deg)}}
-  .gate{position:absolute;inset:0;background:#000d;display:flex;flex-direction:column;
-        align-items:center;justify-content:center;gap:14px;text-align:center;padding:20px}
-  .btn{padding:14px 30px;border:0;border-radius:30px;font-size:18px;font-weight:600;
-       background:#2ea6ff;color:#fff}
-  .err{position:absolute;display:none;text-align:center;padding:20px}
-  .err button{margin-top:12px;padding:10px 22px;border:0;border-radius:8px;font-size:16px}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <video id="v" controls playsinline webkit-playsinline preload="metadata"></video>
-  <div class="gate" id="gate">
-    <div>🎬 Video ready hai</div>
-    <button class="btn" id="playBtn">▶️ Play Now</button>
-    <small>Ek chhota sponsor ad dikhega, phir video chalega</small>
-  </div>
-  <div class="spin" id="spin"></div>
-  <div class="err" id="err">Video load nahi hua.<br><button id="retry">Retry</button></div>
-</div>
+import os, re, base64, hmac, hashlib
+from contextlib import asynccontextmanager
 
-<script>
-  // ====== MONETAG: apna Zone ID yahan daalo (Monetag dashboard > Telegram Mini App zone) ======
-  const ZONE = "YOUR_ZONE_ID";
-  // ===========================================================================================
+import httpx
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import StreamingResponse, FileResponse
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-  const tg = window.Telegram && Telegram.WebApp;
-  if (tg) { tg.ready(); tg.expand(); }
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+BASE_URL = os.environ["BASE_URL"].rstrip("/")  # e.g. https://yourapp.onrender.com
+SECRET = os.environ.get("SECRET", BOT_TOKEN).encode()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-  const t = new URLSearchParams(location.search).get("t");
-  const v = document.getElementById("v");
-  const spin = document.getElementById("spin");
-  const err = document.getElementById("err");
-  const gate = document.getElementById("gate");
-  const src = "/stream/" + t;
+URL_RE = re.compile(r"https?://\S+", re.I)
 
-  // Monetag SDK load
-  if (ZONE !== "YOUR_ZONE_ID") {
-    const s = document.createElement("script");
-    s.src = "https://libtl.com/sdk.js";
-    s.dataset.zone = ZONE;
-    s.dataset.sdk = "show_" + ZONE;
-    document.head.appendChild(s);
-  }
 
-  // Video ko background me pehle se warm-up (metadata) taaki ad ke baad turant chale
-  if (t) { v.src = src; v.load(); }
+# ---------- signed token (source URL hidden + tamper-proof) ----------
+def _sig(raw: str) -> str:
+    return hmac.new(SECRET, raw.encode(), hashlib.sha256).hexdigest()[:16]
 
-  function startVideo() {
-    gate.style.display = "none";
-    err.style.display = "none";
-    spin.style.display = "block";
-    v.play().catch(() => { spin.style.display = "none"; });
-  }
 
-  document.getElementById("playBtn").onclick = async () => {
-    const show = window["show_" + ZONE];
-    if (typeof show === "function") {
-      try { await show(); } catch (e) { /* ad nahi mila ya band hua: video phir bhi chalao */ }
-    }
-    startVideo();
-  };
+def make_token(url: str) -> str:
+    raw = base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
+    return f"{raw}.{_sig(raw)}"
 
-  v.addEventListener("waiting", () => spin.style.display = "block");
-  v.addEventListener("canplay", () => spin.style.display = "none");
-  v.addEventListener("playing", () => spin.style.display = "none");
-  v.addEventListener("error", () => { spin.style.display = "none"; gate.style.display = "none"; err.style.display = "block"; });
-  document.getElementById("retry").onclick = () => { v.src = src; v.load(); startVideo(); };
 
-  if (!t) { gate.style.display = "none"; err.style.display = "block"; }
-</script>
-</body>
-</html>
+def read_token(token: str) -> str:
+    try:
+        raw, sig = token.rsplit(".", 1)
+    except ValueError:
+        raise HTTPException(400, "bad token")
+    if not hmac.compare_digest(sig, _sig(raw)):
+        raise HTTPException(403, "invalid token")
+    return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode()
+
+
+# ---------- Telegram bot ----------
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Video ka direct link (.mp4) bhejo, main play button bana dunga.")
+
+
+async def on_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    m = URL_RE.search(update.message.text or "")
+    if not m:
+        return
+    url = m.group(0)
+    player = f"{BASE_URL}/player?t={make_token(url)}"
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("👉 Play Online Free", web_app=WebAppInfo(url=player))]]
+    )
+    await update.message.reply_text(
+        "🎬 Watch this video for FREE!\n\n▶️ Tap the button below to play instantly",
+        reply_markup=kb,
+    )
+
+
+tg_app = Application.builder().token(BOT_TOKEN).build()
+tg_app.add_handler(CommandHandler("start", start))
+tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_link))
+
+http = httpx.AsyncClient(
+    follow_redirects=True,
+    timeout=httpx.Timeout(30.0, read=None),
+    limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
+    headers={"User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"},
+)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await tg_app.initialize()
+    await tg_app.start()
+    await tg_app.updater.start_polling(drop_pending_updates=True)
+    yield
+    await tg_app.updater.stop()
+    await tg_app.stop()
+    await tg_app.shutdown()
+    await http.aclose()
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/")
+async def root():
+    return {"status": "ok"}
+
+
+@app.get("/player")
+async def player():
+    return FileResponse(os.path.join(BASE_DIR, "player.html"), headers={"Cache-Control": "no-cache"})
+
+
+# ---------- Range-aware proxy: seeking + fast start ----------
+@app.get("/stream/{token}")
+async def stream(token: str, request: Request):
+    url = read_token(token)
+    headers = {}
+    if "range" in request.headers:
+        headers["Range"] = request.headers["range"]
+
+    upstream = await http.send(http.build_request("GET", url, headers=headers), stream=True)
+    if upstream.status_code >= 400:
+        await upstream.aclose()
+        raise HTTPException(upstream.status_code, "source error")
+
+    out = {"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"}
+    for h in ("content-length", "content-range"):
+        if h in upstream.headers:
+            out[h] = upstream.headers[h]
+    out["Content-Type"] = upstream.headers.get("content-type", "video/mp4")
+
+    async def body():
+        try:
+            async for chunk in upstream.aiter_raw(256 * 1024):
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    return StreamingResponse(body(), status_code=upstream.status_code, headers=out)
