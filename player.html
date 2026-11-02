@@ -3,104 +3,207 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Play Video</title>
+<meta name="color-scheme" content="dark">
+<title>Video</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<!-- TADS widget script -->
 <script src="https://w.tads.me/widget.js"></script>
 <style>
-  html,body{margin:0;height:100%;background:#000;color:#fff;font-family:system-ui,sans-serif}
-  .wrap{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center}
-  video{width:100%;max-height:100%;background:#000;outline:none}
-  .spin{position:absolute;width:46px;height:46px;border:4px solid #ffffff33;border-top-color:#fff;
-        border-radius:50%;animation:s .8s linear infinite;pointer-events:none;display:none}
-  @keyframes s{to{transform:rotate(360deg)}}
-  .gate{position:absolute;inset:0;background:#000d;display:flex;flex-direction:column;
-        align-items:center;justify-content:center;gap:14px;text-align:center;padding:20px}
-  .btn{padding:14px 30px;border:0;border-radius:30px;font-size:18px;font-weight:600;
-       background:#2ea6ff;color:#fff}
-  .err{position:absolute;display:none;text-align:center;padding:20px}
-  .err button{margin-top:12px;padding:10px 22px;border:0;border-radius:8px;font-size:16px}
+  :root{
+    --bg:#131313; --surface:#1b1b1b; --line:#2c2c2c;
+    --text:#ebebeb; --muted:#8e8e8e; --btn:#ebebeb; --btn-text:#131313;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font:15px/1.5 -apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  .app{display:flex;flex-direction:column;height:100%;max-width:860px;margin:0 auto}
+
+  .player{position:relative;flex:1;min-height:0;background:#000}
+  video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
+
+  .lock{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:14px;padding:28px;text-align:center}
+  .lock svg{width:34px;height:34px;stroke:var(--muted);fill:none;stroke-width:1.6}
+  .lock p{margin:0;color:var(--muted);max-width:280px}
+  .ring{width:22px;height:22px;border:2px solid var(--line);border-top-color:var(--muted);
+    border-radius:50%;animation:spin .9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .link{background:none;border:0;color:var(--muted);font:inherit;font-size:13px;
+    text-decoration:underline;text-underline-offset:3px;cursor:pointer;padding:4px}
+
+  .bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+    background:var(--surface);border-top:1px solid var(--line)}
+  .meta{min-width:0}
+  .meta b{display:block;font-weight:600;font-size:15px}
+  .meta span{color:var(--muted);font-size:13px}
+
+  .btn{display:inline-flex;align-items:center;gap:8px;border:0;border-radius:8px;
+    padding:10px 16px;font:inherit;font-weight:600;background:var(--btn);color:var(--btn-text);cursor:pointer}
+  .btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .btn:disabled{opacity:.35;cursor:not-allowed}
+  .btn.block{width:100%;justify-content:center}
+
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;
+    align-items:center;justify-content:center;padding:20px;z-index:99999}
+  .card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--line);
+    border-radius:12px;padding:22px}
+  .card h2{margin:0 0 8px;font-size:17px;font-weight:600}
+  .card p{margin:0 0 12px;color:var(--muted)}
+  .card ol{margin:0 0 18px;padding-left:20px;color:var(--text)}
+  .card li{margin-bottom:6px}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <video id="v" controls playsinline webkit-playsinline preload="metadata"></video>
-  <div class="gate" id="gate">
-    <div>🎬 Video ready hai</div>
-    <button class="btn" id="playBtn">▶️ Play Now</button>
-    <small>Ek chhota sponsor ad dikhega, phir video chalega</small>
+<div class="app">
+  <div class="player">
+    <video id="v" playsinline webkit-playsinline preload="metadata"></video>
+    <div class="lock" id="lock">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+      <div class="ring" id="ring"></div>
+      <p id="lockMsg">Ad load ho raha hai. Ad poora hone ke baad video chalega.</p>
+      <button class="link" id="retryLink" hidden>Ad nahi dikha? Dobara try karo</button>
+    </div>
   </div>
-  <div class="spin" id="spin"></div>
-  <div class="err" id="err">Video load nahi hua.<br><button id="retry">Retry</button></div>
+
+  <div class="bar">
+    <div class="meta">
+      <b>Video</b>
+      <span id="dur">Locked</span>
+    </div>
+    <button class="btn" id="dl" disabled>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>
+      Download
+    </button>
+  </div>
+</div>
+
+<div class="overlay" id="modal" hidden>
+  <div class="card" role="dialog" aria-modal="true">
+    <h2 id="mTitle"></h2>
+    <p id="mBody"></p>
+    <ol id="mSteps"></ol>
+    <button class="btn block" id="mRetry">Retry</button>
+  </div>
 </div>
 
 <script>
-  // ====== TADS: dashboard se Fullscreen widget banao aur uska ID yahan daalo ======
-  const WIDGET_ID = "13042";
-  const IS_DEBUG  = true;               // test ke time true, live jaane par false
-  // ================================================================================
+  // ====== Settings ======
+  const WIDGET_ID = "13042";   // TADS Fullscreen widget
+  const IS_DEBUG  = true;      // test me true, live jaane par false
+  // ======================
 
   const tg = window.Telegram && Telegram.WebApp;
-  if (tg) { tg.ready(); tg.expand(); }
+  if (tg) {
+    try { tg.ready(); tg.expand(); tg.setHeaderColor("#131313"); tg.setBackgroundColor("#131313"); } catch (e) {}
+  }
 
+  const $ = id => document.getElementById(id);
   const t = new URLSearchParams(location.search).get("t");
-  const v = document.getElementById("v");
-  const spin = document.getElementById("spin");
-  const err = document.getElementById("err");
-  const gate = document.getElementById("gate");
-  const src = "/stream/" + t;
+  const v = $("v"), lock = $("lock"), lockMsg = $("lockMsg"), ring = $("ring");
+  const dl = $("dl"), dur = $("dur"), modal = $("modal"), retryLink = $("retryLink");
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  let unlocked = false;
 
-  // Video ko pehle se warm-up (metadata) taaki ad ke baad turant chale
-  if (t) { v.src = src; v.load(); }
+  const reload = () => location.reload();
+  $("mRetry").onclick = reload;
+  retryLink.onclick = reload;
 
-  function startVideo() {
-    gate.style.display = "none";
-    err.style.display = "none";
-    spin.style.display = "block";
-    v.play().catch(() => { spin.style.display = "none"; });
-  }
-
-  let controller = null;
-
-  async function getController() {
-    for (let i = 0; i < 40 && !(window.tads && typeof window.tads.init === "function"); i++) await sleep(100);
-    if (!(window.tads && typeof window.tads.init === "function")) return null;
-    if (!controller) {
-      controller = window.tads.controllers?.[WIDGET_ID] || window.tads.init({
-        widgetId: Number(WIDGET_ID),
-        type: "fullscreen",
-        debug: IS_DEBUG,
-        onShowReward: () => finish(),     // ad poora dekha -> video
-        onAdsNotFound: () => finish()     // ad nahi mila -> video phir bhi chalao
-      });
-    }
-    return controller;
-  }
-
-  let finished = false;
-  function finish() { if (finished) return; finished = true; startVideo(); }
-
-  document.getElementById("playBtn").onclick = async () => {
-    finished = false;
-    if (!WIDGET_ID) { finish(); return; }   // widget ID set nahi hua
-    try {
-      const c = await getController();
-      if (!c) { finish(); return; }
-      await c.showAd();                  // fullscreen ad kholta hai
-    } catch (e) {
-      console.log("TADS:", e);
-      finish();                          // error / too many ads -> video chalao
+  const MSG = {
+    blocked: {
+      title: "Ad load nahi ho paya",
+      body: "Video dekhne ke liye ad dekhna zaroori hai. Lagta hai aapke adblocker ya DNS ne ad ko block kar diya hai.",
+      steps: [
+        "Adblocker ya VPN band karo.",
+        "AdGuard / NextDNS jaisa Private DNS laga ho to use Off ya Automatic karo (Settings → Network → Private DNS).",
+        "Phir Retry dabao."
+      ]
+    },
+    noads: {
+      title: "Abhi koi ad available nahi hai",
+      body: "Thodi der baad dobara try karo.",
+      steps: []
+    },
+    limit: {
+      title: "Thoda ruko",
+      body: "Bahut jaldi jaldi ad maange gaye. Ek do minute baad dobara try karo.",
+      steps: []
     }
   };
 
-  v.addEventListener("waiting", () => spin.style.display = "block");
-  v.addEventListener("canplay", () => spin.style.display = "none");
-  v.addEventListener("playing", () => spin.style.display = "none");
-  v.addEventListener("error", () => { spin.style.display = "none"; gate.style.display = "none"; err.style.display = "block"; });
-  document.getElementById("retry").onclick = () => { v.src = src; v.load(); startVideo(); };
+  function fail(kind) {
+    if (unlocked) return;
+    const m = MSG[kind] || MSG.blocked;
+    $("mTitle").textContent = m.title;
+    $("mBody").textContent = m.body;
+    $("mSteps").innerHTML = m.steps.map(s => "<li>" + s + "</li>").join("");
+    $("mSteps").hidden = !m.steps.length;
+    ring.hidden = true;
+    modal.hidden = false;
+  }
 
-  if (!t) { gate.style.display = "none"; err.style.display = "block"; }
+  function unlock() {
+    if (unlocked) return;
+    unlocked = true;
+    modal.hidden = true;
+    lock.hidden = true;
+    v.controls = true;
+    dl.disabled = false;
+    dur.textContent = v.duration ? fmt(v.duration) : "Ready";
+    v.play().catch(() => {});
+  }
+
+  function fmt(s) {
+    s = Math.round(s);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+    const p = n => String(n).padStart(2, "0");
+    return (h ? h + ":" + p(m) : m) + ":" + p(x);
+  }
+
+  v.addEventListener("loadedmetadata", () => { if (unlocked) dur.textContent = fmt(v.duration); });
+  v.addEventListener("error", () => {
+    if (!unlocked) return;
+    lock.hidden = false;
+    ring.hidden = true;
+    lockMsg.textContent = "Video load nahi hua.";
+    retryLink.textContent = "Retry";
+    retryLink.hidden = false;
+  });
+
+  dl.onclick = () => {
+    const url = location.origin + "/stream/" + t + "?dl=1";
+    if (tg && tg.openLink) tg.openLink(url);   // browser me khulta hai, wahi se download hota hai
+    else location.href = url;
+  };
+
+  async function run() {
+    if (!t) { ring.hidden = true; lockMsg.textContent = "Link sahi nahi hai."; return; }
+
+    v.src = "/stream/" + t;   // peeche warm-up, ad ke baad turant chale
+    v.load();
+    setTimeout(() => { if (!unlocked && modal.hidden) retryLink.hidden = false; }, 8000);
+
+    for (let i = 0; i < 60 && !(window.tads && typeof window.tads.init === "function"); i++) await sleep(100);
+    if (!(window.tads && typeof window.tads.init === "function")) { fail("blocked"); return; }
+
+    try {
+      const c = (window.tads.controllers && window.tads.controllers[WIDGET_ID]) || window.tads.init({
+        widgetId: Number(WIDGET_ID),
+        type: "fullscreen",
+        debug: IS_DEBUG,
+        onShowReward: () => unlock(),
+        onAdsNotFound: () => (IS_DEBUG ? unlock() : fail("noads"))
+      });
+      await c.showAd();
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      if (/too many/i.test(msg)) fail("limit");
+      else if (/no ads/i.test(msg)) (IS_DEBUG ? unlock() : fail("noads"));
+      else fail("blocked");
+    }
+  }
+
+  run();
 </script>
 </body>
 </html>
